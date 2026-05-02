@@ -430,7 +430,7 @@ Replace the `analyzeWithGeminiApi` function (currently lines 91-180) and add a n
 
 ```ts
 import { extractAudio } from "../extractors/audio.js";
-import { hmsToSeconds, formatHMS } from "../utils/timestamps.js";
+import { parseHMS, formatHMS } from "../utils/timestamps.js";
 import type { Config } from "../types.js";
 ```
 
@@ -438,7 +438,7 @@ Then replace the existing `analyzeWithGeminiApi` function (the one starting `exp
 
 ```ts
 function offsetTimestamp(hms: string, offsetSec: number): string {
-  return formatHMS(hmsToSeconds(hms) + offsetSec);
+  return formatHMS(parseHMS(hms) + offsetSec);
 }
 
 export async function transcribeChunk(
@@ -565,10 +565,10 @@ export async function analyzeWithGeminiApi(
 }
 ```
 
-Verify `mcp-server/src/utils/timestamps.ts` exports both `formatHMS` and `hmsToSeconds`. If `hmsToSeconds` is missing, add it to that file:
+Verify `mcp-server/src/utils/timestamps.ts` exports both `formatHMS` and `parseHMS`. If `parseHMS` is missing, add it to that file:
 
 ```ts
-export function hmsToSeconds(hms: string): number {
+export function parseHMS(hms: string): number {
   const parts = hms.split(":").map(Number);
   if (parts.length !== 3) throw new Error(`Invalid HMS string: ${hms}`);
   const [h, m, s] = parts;
@@ -890,9 +890,10 @@ import { defaultConfig } from "../../src/config.js";
 describe("planChunks", () => {
   it("returns single chunk when duration <= chunk_size", async () => {
     const fakeDetector: SilenceDetector = vi.fn(async () => []);
-    const plan = await planChunks("/x.mp4", 500, defaultConfig, fakeDetector);
-    expect(plan).toHaveLength(1);
-    expect(plan[0]).toMatchObject({ start: 0, end: 500, index: 0, total: 1 });
+    const { chunks, warnings } = await planChunks("/x.mp4", 500, defaultConfig, fakeDetector);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toMatchObject({ start: 0, end: 500, index: 0, total: 1 });
+    expect(warnings).toEqual([]);
   });
 
   it("uses clean silence cuts when silences fall near ideal boundaries", async () => {
@@ -901,9 +902,9 @@ describe("planChunks", () => {
       { start: "00:19:50", end: "00:20:00", duration: 10 },
       { start: "00:29:58", end: "00:30:02", duration: 4 },
     ]);
-    const plan = await planChunks("/x.mp4", 2400, defaultConfig, fakeDetector);
-    expect(plan).toHaveLength(4);
-    expect(plan.map(p => p.clean_cut)).toEqual([true, true, true, true]);
+    const { chunks } = await planChunks("/x.mp4", 2400, defaultConfig, fakeDetector);
+    expect(chunks).toHaveLength(4);
+    expect(chunks.map(p => p.clean_cut)).toEqual([true, true, true, true]);
     expect(fakeDetector).toHaveBeenCalledTimes(1);
   });
 
@@ -914,27 +915,29 @@ describe("planChunks", () => {
       if (threshold === "default") return [];
       return [{ start: "00:09:50", end: "00:10:10", duration: 20 }];
     });
-    const plan = await planChunks("/x.mp4", 1300, defaultConfig, fakeDetector);
+    const { chunks, warnings } = await planChunks("/x.mp4", 1300, defaultConfig, fakeDetector);
     expect(callCount).toBe(2);
-    expect(plan).toHaveLength(2);
-    expect(plan[0].clean_cut).toBe(true);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].clean_cut).toBe(true);
+    expect(warnings.some(w => w.event === "loose_threshold")).toBe(true);
   });
 
   it("falls back to hard cut and emits hard_cut warning when no silence found", async () => {
     const fakeDetector: SilenceDetector = vi.fn(async () => []);
-    const plan = await planChunks("/x.mp4", 1300, defaultConfig, fakeDetector);
-    expect(plan).toHaveLength(2);
-    expect(plan[0].clean_cut).toBe(false);
-    expect(plan[0].end).toBe(600); // exact ideal boundary
+    const { chunks, warnings } = await planChunks("/x.mp4", 1300, defaultConfig, fakeDetector);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].clean_cut).toBe(false);
+    expect(chunks[0].end).toBe(600); // exact ideal boundary
+    expect(warnings.some(w => w.event === "hard_cut")).toBe(true);
   });
 
   it("respects audio_chunk_overlap_seconds in actual_start", async () => {
     const fakeDetector: SilenceDetector = vi.fn(async () => []);
     const config = { ...defaultConfig, audio_chunk_overlap_seconds: 5 };
-    const plan = await planChunks("/x.mp4", 1300, config, fakeDetector);
-    expect(plan[0].actual_start).toBe(0); // first chunk: max(0, 0-5) = 0
-    expect(plan[1].start).toBe(600);
-    expect(plan[1].actual_start).toBe(595); // 600 - 5
+    const { chunks } = await planChunks("/x.mp4", 1300, config, fakeDetector);
+    expect(chunks[0].actual_start).toBe(0); // first chunk: max(0, 0-5) = 0
+    expect(chunks[1].start).toBe(600);
+    expect(chunks[1].actual_start).toBe(595); // 600 - 5
   });
 });
 ```
@@ -959,7 +962,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import type { ChunkPlan, ChunkWarning, Config, Interval } from "../types.js";
 import { parseSilenceOutput } from "./analyzers.js";
-import { hmsToSeconds } from "../utils/timestamps.js";
+import { parseHMS } from "../utils/timestamps.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -1004,7 +1007,7 @@ function findNearestSilence(boundary: number, silences: Interval[]): number | nu
   let nearestMidpoint: number | null = null;
   let nearestDistance = Infinity;
   for (const s of silences) {
-    const mid = (hmsToSeconds(s.start) + hmsToSeconds(s.end)) / 2;
+    const mid = (parseHMS(s.start) + parseHMS(s.end)) / 2;
     const distance = Math.abs(mid - boundary);
     if (distance <= TOLERANCE_SECONDS && distance < nearestDistance) {
       nearestDistance = distance;
