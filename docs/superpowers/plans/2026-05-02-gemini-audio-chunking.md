@@ -1325,10 +1325,12 @@ describe("analyzeWithGeminiApi orchestrator", () => {
   });
 
   it("emits sentinel segment when chunk fails after retry", async () => {
-    let callCount = 0;
-    const worker = vi.fn(async () => {
-      callCount++;
-      if (callCount === 3 || callCount === 4) throw new Error("Gemini 500");
+    // Chunk 2 (offset=1200) fails on every call. Other chunks succeed first try.
+    // Failure is keyed by offset (not by callCount) so it's deterministic under
+    // Promise.all parallelism.
+    const FAIL_OFFSET = 1200;
+    const worker = vi.fn(async (_wav: string, offset: number) => {
+      if (offset === FAIL_OFFSET) throw new Error("Gemini 500");
       return { segments: [{ start: "00:00:00", end: "00:00:05", text: "ok" }], tags: [] };
     });
     const extract = vi.fn(async (_v: string, _d: string, opts?: { filename?: string }) =>
