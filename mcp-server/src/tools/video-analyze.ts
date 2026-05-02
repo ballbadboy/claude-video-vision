@@ -211,9 +211,7 @@ export function registerVideoAnalyze(server: McpServer): void {
           let audioResult: AudioResult;
 
           if (config.backend === "gemini-api") {
-            const audioDir = join(workDir, "audio");
-            const wavPath = await extractAudio(safePath, audioDir, {});
-            audioResult = await analyzeWithGeminiApi(wavPath);
+            audioResult = await analyzeWithGeminiApi(safePath, config);
           } else if (config.backend === "openai") {
             const audioDir = join(workDir, "audio");
             const wavPath = await extractAudio(safePath, audioDir, {});

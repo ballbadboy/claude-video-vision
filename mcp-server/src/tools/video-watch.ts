@@ -122,11 +122,10 @@ export function registerVideoWatch(server: McpServer): void {
       if (params.skip_audio || !metadata.has_audio) {
         audioPromise = Promise.resolve({ backend: "none" as const, transcription: [], audio_tags: [], full_analysis: null });
       } else if (config.backend === "gemini-api") {
-        const audioDir = join(workDir, "audio");
-        audioPromise = extractAudio(safePath, audioDir, {
+        audioPromise = analyzeWithGeminiApi(safePath, config, {
           startTime: params.start_time,
           endTime: params.end_time,
-        }).then((wavPath) => analyzeWithGeminiApi(wavPath));
+        });
       } else if (config.backend === "openai") {
         const audioDir = join(workDir, "audio");
         audioPromise = extractAudio(safePath, audioDir, {
