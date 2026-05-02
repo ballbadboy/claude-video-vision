@@ -1,8 +1,5 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { join } from "path";
-import { mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
 import type { ChunkPlan, ChunkWarning, Config, Interval } from "../types.js";
 import { parseSilenceOutput } from "./analyzers.js";
 import { parseHMS } from "../utils/timestamps.js";
@@ -23,20 +20,15 @@ export async function detectSilencesReal(
   videoPath: string,
   threshold: SilenceThreshold,
 ): Promise<Interval[]> {
-  const tmp = mkdtempSync(join(tmpdir(), "cvv-silence-"));
+  const args = ["-i", videoPath, "-af", SILENCE_PARAMS[threshold], "-f", "null", "-"];
+  let stderr = "";
   try {
-    const args = ["-i", videoPath, "-af", SILENCE_PARAMS[threshold], "-f", "null", "-"];
-    let stderr = "";
-    try {
-      const r = await execFileAsync("ffmpeg", args, { maxBuffer: 100 * 1024 * 1024 });
-      stderr = r.stderr;
-    } catch (err: any) {
-      stderr = err.stderr || "";
-    }
-    return parseSilenceOutput(stderr);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    const r = await execFileAsync("ffmpeg", args, { maxBuffer: 100 * 1024 * 1024 });
+    stderr = r.stderr;
+  } catch (err: any) {
+    stderr = err.stderr || "";
   }
+  return parseSilenceOutput(stderr);
 }
 
 interface BoundaryMatch {
@@ -83,6 +75,13 @@ export async function planChunks(
   const idealBoundaries: number[] = [];
   for (let t = chunkSize; t + chunkSize <= durationSec; t += chunkSize) {
     idealBoundaries.push(t);
+  }
+
+  if (idealBoundaries.length === 0) {
+    return {
+      chunks: [{ start: 0, actual_start: 0, end: durationSec, index: 0, total: 1, clean_cut: true }],
+      warnings: [],
+    };
   }
 
   // Pass 1: default threshold

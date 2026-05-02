@@ -21,6 +21,7 @@ describe("planChunks", () => {
     expect(chunks).toHaveLength(4);
     expect(chunks.map(p => p.clean_cut)).toEqual([true, true, true, true]);
     expect(fakeDetector).toHaveBeenCalledTimes(1);
+    expect(chunks.map(c => c.end)).toEqual([600, 1195, 1800, 2400]);
   });
 
   it("retries with looser threshold when default returns insufficient silences", async () => {
