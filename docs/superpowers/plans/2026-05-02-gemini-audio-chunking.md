@@ -779,14 +779,14 @@ describe("chunking types", () => {
   it("ChunkPlan has expected shape", () => {
     const plan: ChunkPlan = {
       start: 0,
-      actualStart: 0,
+      actual_start: 0,
       end: 600,
       index: 0,
       total: 4,
-      cleanCut: true,
+      clean_cut: true,
     };
     expect(plan.start).toBe(0);
-    expect(plan.cleanCut).toBe(true);
+    expect(plan.clean_cut).toBe(true);
   });
 
   it("ChunkWarning has expected event types", () => {
@@ -827,11 +827,11 @@ Append at the end of `mcp-server/src/types.ts`:
 ```ts
 export interface ChunkPlan {
   start: number;
-  actualStart: number;
+  actual_start: number;
   end: number;
   index: number;
   total: number;
-  cleanCut: boolean;
+  clean_cut: boolean;
 }
 
 export interface ChunkWarning {
@@ -903,7 +903,7 @@ describe("planChunks", () => {
     ]);
     const plan = await planChunks("/x.mp4", 2400, defaultConfig, fakeDetector);
     expect(plan).toHaveLength(4);
-    expect(plan.map(p => p.cleanCut)).toEqual([true, true, true, true]);
+    expect(plan.map(p => p.clean_cut)).toEqual([true, true, true, true]);
     expect(fakeDetector).toHaveBeenCalledTimes(1);
   });
 
@@ -917,24 +917,24 @@ describe("planChunks", () => {
     const plan = await planChunks("/x.mp4", 1300, defaultConfig, fakeDetector);
     expect(callCount).toBe(2);
     expect(plan).toHaveLength(2);
-    expect(plan[0].cleanCut).toBe(true);
+    expect(plan[0].clean_cut).toBe(true);
   });
 
   it("falls back to hard cut and emits hard_cut warning when no silence found", async () => {
     const fakeDetector: SilenceDetector = vi.fn(async () => []);
     const plan = await planChunks("/x.mp4", 1300, defaultConfig, fakeDetector);
     expect(plan).toHaveLength(2);
-    expect(plan[0].cleanCut).toBe(false);
+    expect(plan[0].clean_cut).toBe(false);
     expect(plan[0].end).toBe(600); // exact ideal boundary
   });
 
-  it("respects audio_chunk_overlap_seconds in actualStart", async () => {
+  it("respects audio_chunk_overlap_seconds in actual_start", async () => {
     const fakeDetector: SilenceDetector = vi.fn(async () => []);
     const config = { ...defaultConfig, audio_chunk_overlap_seconds: 5 };
     const plan = await planChunks("/x.mp4", 1300, config, fakeDetector);
-    expect(plan[0].actualStart).toBe(0); // first chunk: max(0, 0-5) = 0
+    expect(plan[0].actual_start).toBe(0); // first chunk: max(0, 0-5) = 0
     expect(plan[1].start).toBe(600);
-    expect(plan[1].actualStart).toBe(595); // 600 - 5
+    expect(plan[1].actual_start).toBe(595); // 600 - 5
   });
 });
 ```
@@ -996,7 +996,7 @@ export async function detectSilencesReal(
 interface BoundaryMatch {
   boundary: number;
   silenceMidpoint: number | null;
-  cleanCut: boolean;
+  clean_cut: boolean;
   threshold: SilenceThreshold | null;
 }
 
@@ -1026,7 +1026,7 @@ export async function planChunks(
   // Single-chunk path
   if (durationSec <= chunkSize) {
     return {
-      chunks: [{ start: 0, actualStart: 0, end: durationSec, index: 0, total: 1, cleanCut: true }],
+      chunks: [{ start: 0, actual_start: 0, end: durationSec, index: 0, total: 1, clean_cut: true }],
       warnings: [],
     };
   }
@@ -1044,20 +1044,20 @@ export async function planChunks(
     return {
       boundary: b,
       silenceMidpoint: mid,
-      cleanCut: mid !== null,
+      clean_cut: mid !== null,
       threshold: mid !== null ? "default" : null,
     };
   });
 
   // Pass 2: loose threshold for unmatched
-  const unmatched = matches.filter(m => !m.cleanCut);
+  const unmatched = matches.filter(m => !m.clean_cut);
   if (unmatched.length > 0) {
     const looseSilences = await detector(videoPath, "loose");
     for (const m of unmatched) {
       const mid = findNearestSilence(m.boundary, looseSilences);
       if (mid !== null) {
         m.silenceMidpoint = mid;
-        m.cleanCut = true;
+        m.clean_cut = true;
         m.threshold = "loose";
       }
     }
@@ -1073,11 +1073,11 @@ export async function planChunks(
     const start = prevEnd;
     chunks.push({
       start,
-      actualStart: Math.max(0, start - overlap),
+      actual_start: Math.max(0, start - overlap),
       end,
       index: i,
       total,
-      cleanCut: m.cleanCut,
+      clean_cut: m.clean_cut,
     });
     if (m.threshold === "loose") {
       warnings.push({
@@ -1088,7 +1088,7 @@ export async function planChunks(
         detail: "matched silence using loose threshold",
       });
     }
-    if (!m.cleanCut) {
+    if (!m.clean_cut) {
       warnings.push({
         chunk_index: i,
         chunk_total: total,
@@ -1102,11 +1102,11 @@ export async function planChunks(
   // Final chunk to end of video
   chunks.push({
     start: prevEnd,
-    actualStart: Math.max(0, prevEnd - overlap),
+    actual_start: Math.max(0, prevEnd - overlap),
     end: durationSec,
     index: matches.length,
     total,
-    cleanCut: true, // trailing chunk has no boundary to cut at
+    clean_cut: true, // trailing chunk has no boundary to cut at
   });
 
   return { chunks, warnings };
@@ -1431,7 +1431,7 @@ export async function analyzeWithGeminiApi(
     const wavPaths = await Promise.all(
       chunks.map(c =>
         extract(videoPath, tmpDir, {
-          startTime: secondsToHMS(c.actualStart),
+          startTime: secondsToHMS(c.actual_start),
           endTime: secondsToHMS(c.end),
           filename: `chunk-${c.index}.wav`,
         }),

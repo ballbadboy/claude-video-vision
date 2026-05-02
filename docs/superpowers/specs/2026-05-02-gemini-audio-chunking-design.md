@@ -109,10 +109,10 @@ for any still-unmatched boundary:
   emit ChunkWarning(event: "hard_cut")
 
 return chunks where each chunk's
-  actualStart = max(0, start - config.audio_chunk_overlap_seconds)
+  actual_start = max(0, start - config.audio_chunk_overlap_seconds)
 ```
 
-The `actualStart` field is what gets passed to `extractAudio`; the logical
+The `actual_start` field is what gets passed to `extractAudio`; the logical
 `start` field is what gets passed to `transcribeChunk` as `offsetSec`.
 
 ### `ChunkPlan` type (added to `types.ts`)
@@ -120,18 +120,18 @@ The `actualStart` field is what gets passed to `extractAudio`; the logical
 ```ts
 interface ChunkPlan {
   start: number;        // logical start (seconds, absolute)
-  actualStart: number;  // extraction start (= max(0, start - overlap))
+  actual_start: number;  // extraction start (= max(0, start - overlap))
   end: number;          // seconds, absolute
   index: number;        // 0-based
   total: number;        // total chunks
-  cleanCut: boolean;    // true if start boundary snapped to silence
+  clean_cut: boolean;    // true if start boundary snapped to silence
 }
 ```
 
 ### Why no overlap by default
 
 Default `audio_chunk_overlap_seconds = 0`. Adding overlap is asymmetric: chunk
-N's `actualStart = max(0, start - overlap)`, while `end` stays at the logical
+N's `actual_start = max(0, start - overlap)`, while `end` stays at the logical
 boundary. Chunks N-1 and N share `overlap` seconds of audio, which gets
 transcribed twice — once at the tail of chunk N-1 and once at the head of
 chunk N (with offset added).
