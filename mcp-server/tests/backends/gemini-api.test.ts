@@ -273,3 +273,82 @@ describe("transcribeChunkWithRetry", () => {
     expect(onWarning).toHaveBeenCalledTimes(1);
   });
 });
+
+import { analyzeWithGeminiApi } from "../../src/backends/gemini-api.js";
+
+describe("analyzeWithGeminiApi orchestrator", () => {
+  const baseConfig = { ...defaultConfig, audio_chunk_trigger_seconds: 1200, audio_chunk_size_seconds: 600 };
+
+  function metaStub(seconds: number) {
+    return vi.fn(async () => ({
+      duration: "x", duration_seconds: seconds,
+      resolution: "x", width: 0, height: 0, codec: "h264",
+      original_fps: 30, file_size: "x", has_audio: true,
+    }));
+  }
+
+  beforeEach(() => {
+    process.env.GEMINI_API_KEY = "test-key";
+  });
+
+  it("uses single-call path when duration <= chunk_trigger", async () => {
+    const worker = vi.fn(async () => ({
+      segments: [{ start: "00:00:00", end: "00:00:05", text: "short" }],
+      tags: [],
+    }));
+    const extract = vi.fn(async () => "/tmp/audio.wav");
+    const result = await analyzeWithGeminiApi("/x.mp4", baseConfig, undefined, {
+      getMetadata: metaStub(600),
+      extract,
+      worker,
+    });
+    expect(worker).toHaveBeenCalledTimes(1);
+    expect(result.transcription).toHaveLength(1);
+    expect(result.warnings).toBeUndefined();
+  });
+
+  it("uses chunked path when duration > chunk_trigger", async () => {
+    const worker = vi.fn(async (_wav, offset) => ({
+      segments: [{ start: "00:00:00", end: "00:00:05", text: `at ${offset}` }],
+      tags: [],
+    }));
+    const extract = vi.fn(async (_v: string, _d: string, opts?: { filename?: string }) =>
+      `/tmp/${opts?.filename ?? "audio.wav"}`,
+    );
+    const silenceDetector = vi.fn(async () => []);
+    const result = await analyzeWithGeminiApi("/x.mp4", baseConfig, undefined, {
+      getMetadata: metaStub(2400),
+      extract,
+      worker,
+      silenceDetector,
+    });
+    expect(worker).toHaveBeenCalledTimes(4);
+    expect(result.transcription).toHaveLength(4);
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings!.filter(w => w.event === "hard_cut")).toHaveLength(3);
+  });
+
+  it("emits sentinel segment when chunk fails after retry", async () => {
+    // Chunk 2 (offset=1200) fails on every call. Other chunks succeed first try.
+    // With retries=1, chunk 2 makes 2 worker calls — both fail — yielding sentinel + warnings.
+    const FAIL_OFFSET = 1200;
+    const worker = vi.fn(async (_wav: string, offset: number) => {
+      if (offset === FAIL_OFFSET) throw new Error("Gemini 500");
+      return { segments: [{ start: "00:00:00", end: "00:00:05", text: "ok" }], tags: [] };
+    });
+    const extract = vi.fn(async (_v: string, _d: string, opts?: { filename?: string }) =>
+      `/tmp/${opts?.filename ?? "audio.wav"}`,
+    );
+    const silenceDetector = vi.fn(async () => []);
+    const result = await analyzeWithGeminiApi("/x.mp4", baseConfig, undefined, {
+      getMetadata: metaStub(2400),
+      extract,
+      worker,
+      silenceDetector,
+    });
+    const failedSegments = result.transcription.filter(t => t.text.includes("transcription failed"));
+    expect(failedSegments).toHaveLength(1);
+    expect(result.warnings!.filter(w => w.event === "failed")).toHaveLength(1);
+    expect(result.warnings!.filter(w => w.event === "retry")).toHaveLength(1);
+  });
+});

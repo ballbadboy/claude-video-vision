@@ -1,9 +1,11 @@
-import type { AudioResult, AudioTag, Config, TranscriptionSegment } from "../types.js";
+import type { AudioResult, AudioTag, ChunkWarning, Config, TranscriptionSegment } from "../types.js";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { extractAudio } from "../extractors/audio.js";
 import { parseHMS, formatHMS } from "../utils/timestamps.js";
+import { planChunks, type SilenceDetector } from "../extractors/audio-chunker.js";
+import { getVideoMetadata } from "../extractors/frames.js";
 
 interface GenAiFile {
   name?: string;
@@ -193,28 +195,137 @@ export interface AudioSlice {
   endTime?: string;
 }
 
+export interface AnalyzeDeps {
+  getMetadata?: typeof getVideoMetadata;
+  extract?: typeof extractAudio;
+  worker?: TranscribeWorker;
+  silenceDetector?: SilenceDetector;
+}
+
 export async function analyzeWithGeminiApi(
   videoPath: string,
   config: Config,
   slice?: AudioSlice,
+  deps: AnalyzeDeps = {},
 ): Promise<AudioResult> {
+  const getMetadata = deps.getMetadata ?? getVideoMetadata;
+  const extract = deps.extract ?? extractAudio;
+  const worker = deps.worker ?? transcribeChunk;
+  const silenceDetector = deps.silenceDetector;
+
   const tmpDir = mkdtempSync(join(tmpdir(), "cvv-gemini-"));
 
   try {
-    const wavPath = await extractAudio(videoPath, tmpDir, {
-      startTime: slice?.startTime,
-      endTime: slice?.endTime,
+    // Slice mode (start/end set) always uses single-call path
+    if (slice?.startTime || slice?.endTime) {
+      const wavPath = await extract(videoPath, tmpDir, {
+        startTime: slice.startTime,
+        endTime: slice.endTime,
+      });
+      const { segments, tags } = await worker(wavPath, 0, config);
+      return {
+        backend: "gemini-api",
+        transcription: segments,
+        audio_tags: tags,
+        full_analysis: null,
+      };
+    }
+
+    const metadata = await getMetadata(videoPath);
+
+    if (metadata.duration_seconds <= config.audio_chunk_trigger_seconds) {
+      const wavPath = await extract(videoPath, tmpDir);
+      const { segments, tags } = await worker(wavPath, 0, config);
+      return {
+        backend: "gemini-api",
+        transcription: segments,
+        audio_tags: tags,
+        full_analysis: null,
+      };
+    }
+
+    // Chunked path
+    const { chunks, warnings: planWarnings } = await planChunks(
+      videoPath,
+      metadata.duration_seconds,
+      config,
+      silenceDetector,
+    );
+
+    const wavPaths = await Promise.all(
+      chunks.map(c =>
+        extract(videoPath, tmpDir, {
+          startTime: secondsToHMS(c.actual_start),
+          endTime: secondsToHMS(c.end),
+          filename: `chunk-${c.index}.wav`,
+        }),
+      ),
+    );
+
+    const allWarnings: ChunkWarning[] = [...planWarnings];
+
+    const results = await Promise.all(
+      chunks.map((c, i) =>
+        transcribeChunkWithRetry(
+          wavPaths[i],
+          c.start,
+          config,
+          1,
+          worker,
+          (w) => {
+            allWarnings.push({
+              chunk_index: c.index,
+              chunk_total: c.total,
+              time_range: hmsRange(c.start, c.end),
+              event: w.event,
+              detail: w.error,
+            });
+          },
+        ),
+      ),
+    );
+
+    const transcription: TranscriptionSegment[] = [];
+    const audio_tags: AudioTag[] = [];
+    chunks.forEach((c, i) => {
+      const r = results[i];
+      if (r.ok) {
+        transcription.push(...(r.segments ?? []));
+        audio_tags.push(...(r.tags ?? []));
+      } else {
+        transcription.push({
+          start: secondsToHMS(c.start),
+          end: secondsToHMS(c.end),
+          text: "[transcription failed for this segment after retry]",
+        });
+        allWarnings.push({
+          chunk_index: c.index,
+          chunk_total: c.total,
+          time_range: hmsRange(c.start, c.end),
+          event: "failed",
+          detail: r.error,
+        });
+      }
     });
-    const { segments, tags } = await transcribeChunk(wavPath, 0, config);
+
     return {
       backend: "gemini-api",
-      transcription: segments,
-      audio_tags: tags,
+      transcription,
+      audio_tags,
       full_analysis: null,
+      warnings: allWarnings,
     };
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }
+}
+
+function secondsToHMS(sec: number): string {
+  return formatHMS(sec);
+}
+
+function hmsRange(startSec: number, endSec: number): string {
+  return `${secondsToHMS(startSec)}-${secondsToHMS(endSec)}`;
 }
 
 export interface ChunkResult {
