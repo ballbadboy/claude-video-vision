@@ -34,7 +34,7 @@ Available backends:
 export function registerVideoWatch(server: McpServer): void {
   server.tool(
     "video_watch",
-    "Extract frames and process audio from a video file. Returns frames (as base64 images or text descriptions) + transcription + audio analysis for Claude to understand the video content. IMPORTANT: For videos longer than 30 seconds, call video_analyze FIRST to get structural data (scene changes, silence, transcription) before calling this tool — use that data to set smart segments with variable FPS. If not configured, tell the user to run /setup-video-vision first.",
+    "Extract frames and process audio from a video file. Returns frames (as base64 images or text descriptions) + transcription + audio analysis for Claude to understand the video content. IMPORTANT: For videos longer than 30 seconds, call video_analyze FIRST to get structural data (scene changes, silence, transcription) before calling this tool — use that data to set smart segments with variable FPS. If not configured, tell the user to run /setup-video-vision first. When the video is long enough to trigger audio chunking, the result's `audio.warnings` array (if present) reports chunk-boundary decisions and any per-chunk retries or failures — surface these to the user.",
     {
       path: z.string().describe("Absolute or relative path to the video file"),
       fps: z.union([z.coerce.number().positive(), z.literal("auto")]).default("auto").describe("Frames per second to extract"),

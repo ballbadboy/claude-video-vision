@@ -43,7 +43,7 @@ const SESSIONS_DIR = join(homedir(), ".claude-video-vision", "sessions");
 export function registerVideoAnalyze(server: McpServer): void {
   server.tool(
     "video_analyze",
-    "Analyze video structure using ffmpeg filters. Returns scene changes, silence intervals, motion levels, and more. Use this before video_watch to plan which segments need detailed frame extraction. Does not extract frames.",
+    "Analyze video structure using ffmpeg filters. Returns scene changes, silence intervals, motion levels, and more. Use this before video_watch to plan which segments need detailed frame extraction. Does not extract frames. When transcription is enabled and the video is longer than the configured chunk trigger, the audio is chunked and transcribed in parallel; the result may include a `warnings` array describing chunk-boundary decisions, retries, or failures — surface these to the user when present.",
     {
       path: z.string().describe("Absolute or relative path to the video file"),
       filters: z.object({
