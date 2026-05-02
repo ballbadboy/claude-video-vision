@@ -1,7 +1,9 @@
-import type { AudioResult, AudioTag, TranscriptionSegment } from "../types.js";
+import type { AudioResult, AudioTag, Config, TranscriptionSegment } from "../types.js";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { extractAudio } from "../extractors/audio.js";
 import { parseHMS, formatHMS } from "../utils/timestamps.js";
-import type { Config } from "../types.js";
 
 interface GenAiFile {
   name?: string;
@@ -196,9 +198,6 @@ export async function analyzeWithGeminiApi(
   config: Config,
   slice?: AudioSlice,
 ): Promise<AudioResult> {
-  const { mkdtempSync, rmSync } = await import("fs");
-  const { tmpdir } = await import("os");
-  const { join } = await import("path");
   const tmpDir = mkdtempSync(join(tmpdir(), "cvv-gemini-"));
 
   try {
