@@ -25,4 +25,17 @@ describe("audio extraction", () => {
     });
     expect(existsSync(wavPath)).toBe(true);
   });
+
+  it("respects custom filename param", async () => {
+    const wavPath = await extractAudio(FIXTURE, OUT_DIR, {
+      filename: "chunk-3.wav",
+    });
+    expect(wavPath.endsWith("chunk-3.wav")).toBe(true);
+    expect(existsSync(wavPath)).toBe(true);
+  });
+
+  it("defaults to audio.wav when filename omitted", async () => {
+    const wavPath = await extractAudio(FIXTURE, OUT_DIR);
+    expect(wavPath.endsWith("audio.wav")).toBe(true);
+  });
 });

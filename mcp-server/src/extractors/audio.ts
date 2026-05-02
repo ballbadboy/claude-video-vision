@@ -8,6 +8,7 @@ const execFileAsync = promisify(execFile);
 export interface ExtractAudioOptions {
   startTime?: string;
   endTime?: string;
+  filename?: string;
 }
 
 export async function extractAudio(
@@ -19,7 +20,8 @@ export async function extractAudio(
     mkdirSync(outputDir, { recursive: true });
   }
 
-  const outputPath = join(outputDir, "audio.wav");
+  const filename = options.filename ?? "audio.wav";
+  const outputPath = join(outputDir, filename);
   const args: string[] = [];
 
   if (options.startTime) {
