@@ -1,9 +1,16 @@
 import { describe, it, expect } from "vitest";
 import type {
-  AnalysisFilters, SceneChange, Interval, FrameStats,
-  VideoAnalysis, SessionManifest, Segment,
+  AnalysisFilters,
+  AudioResult,
+  ChunkPlan,
+  ChunkWarning,
+  FrameStats,
+  Interval,
+  SceneChange,
+  Segment,
+  SessionManifest,
+  VideoAnalysis,
 } from "../src/types.js";
-import type { ChunkPlan, ChunkWarning, AudioResult } from "../src/types.js";
 
 describe("new types", () => {
   it("AnalysisFilters has all filter flags", () => {
@@ -49,14 +56,14 @@ describe("chunking types", () => {
   it("ChunkPlan has expected shape", () => {
     const plan: ChunkPlan = {
       start: 0,
-      actualStart: 0,
+      actual_start: 0,
       end: 600,
       index: 0,
       total: 4,
-      cleanCut: true,
+      clean_cut: true,
     };
     expect(plan.start).toBe(0);
-    expect(plan.cleanCut).toBe(true);
+    expect(plan.clean_cut).toBe(true);
   });
 
   it("ChunkWarning has expected event types", () => {

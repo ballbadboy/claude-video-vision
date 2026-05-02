@@ -129,11 +129,11 @@ export interface Segment {
 
 export interface ChunkPlan {
   start: number;
-  actualStart: number;
+  actual_start: number;
   end: number;
   index: number;
   total: number;
-  cleanCut: boolean;
+  clean_cut: boolean;
 }
 
 export interface ChunkWarning {
