@@ -37,5 +37,6 @@ describe("audio extraction", () => {
   it("defaults to audio.wav when filename omitted", async () => {
     const wavPath = await extractAudio(FIXTURE, OUT_DIR);
     expect(wavPath.endsWith("audio.wav")).toBe(true);
+    expect(existsSync(wavPath)).toBe(true);
   });
 });
