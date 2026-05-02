@@ -134,7 +134,7 @@ describe("waitForFileActive", () => {
   });
 });
 
-import { transcribeChunk } from "../../src/backends/gemini-api.js";
+import { transcribeChunk, transcribeChunkWithRetry } from "../../src/backends/gemini-api.js";
 import type { Config } from "../../src/types.js";
 import { defaultConfig } from "../../src/config.js";
 
@@ -235,5 +235,41 @@ describe("transcribeChunk", () => {
     }));
     const { transcribeChunk: fresh } = await import("../../src/backends/gemini-api.js?mock3");
     await expect(fresh("/tmp/x.wav", 0, makeConfig())).rejects.toThrow(/GEMINI_API_KEY/);
+  });
+});
+
+describe("transcribeChunkWithRetry", () => {
+  beforeEach(() => {
+    process.env.GEMINI_API_KEY = "test-key";
+  });
+
+  it("returns ok=true on first-try success", async () => {
+    const worker = vi.fn(async () => ({ segments: [], tags: [] }));
+    const result = await transcribeChunkWithRetry("/x.wav", 0, makeConfig(), 1, worker);
+    expect(result.ok).toBe(true);
+    expect(result.attempt).toBe(0);
+    expect(worker).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries once and returns ok=true with attempt=1 + retry warning", async () => {
+    const worker = vi.fn()
+      .mockRejectedValueOnce(new Error("Gemini 500"))
+      .mockResolvedValueOnce({ segments: [], tags: [] });
+    const onWarning = vi.fn();
+    const result = await transcribeChunkWithRetry("/x.wav", 0, makeConfig(), 1, worker, onWarning);
+    expect(result.ok).toBe(true);
+    expect(result.attempt).toBe(1);
+    expect(worker).toHaveBeenCalledTimes(2);
+    expect(onWarning).toHaveBeenCalledWith(expect.objectContaining({ event: "retry" }));
+  });
+
+  it("returns ok=false after retries exhausted", async () => {
+    const worker = vi.fn().mockRejectedValue(new Error("persistent fail"));
+    const onWarning = vi.fn();
+    const result = await transcribeChunkWithRetry("/x.wav", 0, makeConfig(), 1, worker, onWarning);
+    expect(result.ok).toBe(false);
+    expect(result.attempt).toBe(2);
+    expect(worker).toHaveBeenCalledTimes(2);
+    expect(onWarning).toHaveBeenCalledTimes(1);
   });
 });
