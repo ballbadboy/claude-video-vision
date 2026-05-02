@@ -3,6 +3,7 @@ import type {
   AnalysisFilters, SceneChange, Interval, FrameStats,
   VideoAnalysis, SessionManifest, Segment,
 } from "../src/types.js";
+import type { ChunkPlan, ChunkWarning, AudioResult } from "../src/types.js";
 
 describe("new types", () => {
   it("AnalysisFilters has all filter flags", () => {
@@ -41,5 +42,41 @@ describe("new types", () => {
   it("Segment defines time range with fps and optional resolution", () => {
     const seg: Segment = { start: "00:00:00", end: "00:01:00", fps: 2, resolution: 1024 };
     expect(seg.resolution).toBe(1024);
+  });
+});
+
+describe("chunking types", () => {
+  it("ChunkPlan has expected shape", () => {
+    const plan: ChunkPlan = {
+      start: 0,
+      actualStart: 0,
+      end: 600,
+      index: 0,
+      total: 4,
+      cleanCut: true,
+    };
+    expect(plan.start).toBe(0);
+    expect(plan.cleanCut).toBe(true);
+  });
+
+  it("ChunkWarning has expected event types", () => {
+    const w: ChunkWarning = {
+      chunk_index: 0,
+      chunk_total: 4,
+      time_range: "00:00-10:00",
+      event: "retry",
+      detail: "Gemini 500",
+    };
+    expect(w.event).toBe("retry");
+  });
+
+  it("AudioResult.warnings is optional", () => {
+    const r: AudioResult = {
+      backend: "gemini-api",
+      transcription: [],
+      audio_tags: [],
+      full_analysis: null,
+    };
+    expect(r.warnings).toBeUndefined();
   });
 });

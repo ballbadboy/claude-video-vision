@@ -58,6 +58,7 @@ export interface AudioResult {
   transcription: TranscriptionSegment[];
   audio_tags: AudioTag[];
   full_analysis: string | null;
+  warnings?: ChunkWarning[];
 }
 
 export interface VideoWatchResult {
@@ -124,4 +125,21 @@ export interface Segment {
   end: string;
   fps: number;
   resolution?: number;
+}
+
+export interface ChunkPlan {
+  start: number;
+  actualStart: number;
+  end: number;
+  index: number;
+  total: number;
+  cleanCut: boolean;
+}
+
+export interface ChunkWarning {
+  chunk_index: number;
+  chunk_total: number;
+  time_range: string;
+  event: "retry" | "failed" | "hard_cut" | "loose_threshold";
+  detail?: string;
 }
