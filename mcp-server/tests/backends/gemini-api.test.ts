@@ -351,4 +351,23 @@ describe("analyzeWithGeminiApi orchestrator", () => {
     expect(result.warnings!.filter(w => w.event === "failed")).toHaveLength(1);
     expect(result.warnings!.filter(w => w.event === "retry")).toHaveLength(1);
   });
+
+  it("uses single-call path when slice is provided, even for long videos", async () => {
+    const worker = vi.fn(async () => ({
+      segments: [{ start: "00:00:00", end: "00:00:05", text: "slice" }],
+      tags: [],
+    }));
+    const extract = vi.fn(async () => "/tmp/audio.wav");
+    const getMetadata = metaStub(2400); // long enough to trigger chunking absent slice
+    const result = await analyzeWithGeminiApi(
+      "/x.mp4",
+      baseConfig,
+      { startTime: "00:01:00", endTime: "00:02:00" },
+      { getMetadata, extract, worker },
+    );
+    expect(worker).toHaveBeenCalledTimes(1);
+    expect(getMetadata).not.toHaveBeenCalled(); // slice path skips metadata fetch entirely
+    expect(result.transcription).toHaveLength(1);
+    expect(result.warnings).toBeUndefined();
+  });
 });

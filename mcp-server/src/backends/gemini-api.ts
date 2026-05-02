@@ -190,6 +190,46 @@ Use "00:00:00" if you cannot determine a timestamp. Return empty arrays if no sp
   }
 }
 
+export interface ChunkResult {
+  ok: boolean;
+  attempt: number;
+  segments?: TranscriptionSegment[];
+  tags?: AudioTag[];
+  error?: string;
+}
+
+export type TranscribeWorker = (
+  wavPath: string,
+  offsetSec: number,
+  config: Config,
+) => Promise<{ segments: TranscriptionSegment[]; tags: AudioTag[] }>;
+
+export type WarningEmitter = (w: { event: "retry"; attempt: number; error: string }) => void;
+
+export async function transcribeChunkWithRetry(
+  wavPath: string,
+  offsetSec: number,
+  config: Config,
+  retries: number,
+  worker: TranscribeWorker = transcribeChunk,
+  onWarning?: WarningEmitter,
+): Promise<ChunkResult> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const r = await worker(wavPath, offsetSec, config);
+      return { ok: true, attempt, segments: r.segments, tags: r.tags };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (attempt < retries) {
+        if (onWarning) onWarning({ event: "retry", attempt, error: msg });
+        continue;
+      }
+      return { ok: false, attempt: attempt + 1, error: msg };
+    }
+  }
+  return { ok: false, attempt: retries + 1, error: "unreachable" };
+}
+
 export interface AudioSlice {
   startTime?: string;
   endTime?: string;
@@ -313,7 +353,7 @@ export async function analyzeWithGeminiApi(
       transcription,
       audio_tags,
       full_analysis: null,
-      warnings: allWarnings,
+      warnings: allWarnings.length > 0 ? allWarnings : undefined,
     };
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
@@ -326,46 +366,6 @@ function secondsToHMS(sec: number): string {
 
 function hmsRange(startSec: number, endSec: number): string {
   return `${secondsToHMS(startSec)}-${secondsToHMS(endSec)}`;
-}
-
-export interface ChunkResult {
-  ok: boolean;
-  attempt: number;
-  segments?: TranscriptionSegment[];
-  tags?: AudioTag[];
-  error?: string;
-}
-
-export type TranscribeWorker = (
-  wavPath: string,
-  offsetSec: number,
-  config: Config,
-) => Promise<{ segments: TranscriptionSegment[]; tags: AudioTag[] }>;
-
-export type WarningEmitter = (w: { event: "retry"; attempt: number; error: string }) => void;
-
-export async function transcribeChunkWithRetry(
-  wavPath: string,
-  offsetSec: number,
-  config: Config,
-  retries: number,
-  worker: TranscribeWorker = transcribeChunk,
-  onWarning?: WarningEmitter,
-): Promise<ChunkResult> {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const r = await worker(wavPath, offsetSec, config);
-      return { ok: true, attempt, segments: r.segments, tags: r.tags };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (attempt < retries) {
-        if (onWarning) onWarning({ event: "retry", attempt, error: msg });
-        continue;
-      }
-      return { ok: false, attempt: attempt + 1, error: msg };
-    }
-  }
-  return { ok: false, attempt: retries + 1, error: "unreachable" };
 }
 
 function getMimeType(path: string): string {

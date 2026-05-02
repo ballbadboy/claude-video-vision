@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import type { ChunkPlan, ChunkWarning, Config, Interval } from "../types.js";
 import { parseSilenceOutput } from "./analyzers.js";
-import { parseHMS } from "../utils/timestamps.js";
+import { parseHMS, formatHMS } from "../utils/timestamps.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -160,10 +160,5 @@ export async function planChunks(
 }
 
 function formatRange(startSec: number, endSec: number): string {
-  const m = (s: number) => {
-    const min = Math.floor(s / 60);
-    const sec = Math.floor(s % 60);
-    return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-  };
-  return `${m(startSec)}-${m(endSec)}`;
+  return `${formatHMS(startSec)}-${formatHMS(endSec)}`;
 }
