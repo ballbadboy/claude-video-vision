@@ -16,6 +16,11 @@ export interface Config {
   frame_describer_model: DescriberModel;
   enable_index: boolean;
   session_max_age_days: number;
+  audio_model: string;
+  audio_max_output_tokens: number;
+  audio_chunk_trigger_seconds: number;
+  audio_chunk_size_seconds: number;
+  audio_chunk_overlap_seconds: number;
 }
 
 export interface VideoMetadata {

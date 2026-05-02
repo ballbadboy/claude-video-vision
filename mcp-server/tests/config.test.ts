@@ -57,4 +57,21 @@ describe("config", () => {
     expect(loaded.enable_index).toBe(true);
     expect(loaded.session_max_age_days).toBe(7);
   });
+
+  it("returns defaults for new audio fields", () => {
+    const config = loadConfig(join(TEST_DIR, "config.json"));
+    expect(config.audio_model).toBe("gemini-3-flash-preview");
+    expect(config.audio_max_output_tokens).toBe(65536);
+    expect(config.audio_chunk_trigger_seconds).toBe(1200);
+    expect(config.audio_chunk_size_seconds).toBe(600);
+    expect(config.audio_chunk_overlap_seconds).toBe(0);
+  });
+
+  it("preserves audio_model override when set", () => {
+    const configPath = join(TEST_DIR, "config.json");
+    writeFileSync(configPath, JSON.stringify({ audio_model: "gemini-3.1-pro-preview" }));
+    const loaded = loadConfig(configPath);
+    expect(loaded.audio_model).toBe("gemini-3.1-pro-preview");
+    expect(loaded.audio_max_output_tokens).toBe(65536);
+  });
 });
