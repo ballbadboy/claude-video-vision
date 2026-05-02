@@ -1,4 +1,7 @@
 import type { AudioResult, AudioTag, TranscriptionSegment } from "../types.js";
+import { extractAudio } from "../extractors/audio.js";
+import { parseHMS, formatHMS } from "../utils/timestamps.js";
+import type { Config } from "../types.js";
 
 interface GenAiFile {
   name?: string;
@@ -88,7 +91,15 @@ export function parseGeminiAudioResponse(raw: string): ParsedGeminiAudio {
   return { transcription, audio_tags };
 }
 
-export async function analyzeWithGeminiApi(audioPath: string): Promise<AudioResult> {
+function offsetTimestamp(hms: string, offsetSec: number): string {
+  return formatHMS(parseHMS(hms) + offsetSec);
+}
+
+export async function transcribeChunk(
+  wavPath: string,
+  offsetSec: number,
+  config: Config,
+): Promise<{ segments: TranscriptionSegment[]; tags: AudioTag[] }> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error("GEMINI_API_KEY environment variable is not set. Run video_setup to configure.");
@@ -98,15 +109,15 @@ export async function analyzeWithGeminiApi(audioPath: string): Promise<AudioResu
   const ai = new GoogleGenAI({ apiKey });
 
   const uploaded = await ai.files.upload({
-    file: audioPath,
-    config: { mimeType: getMimeType(audioPath) },
+    file: wavPath,
+    config: { mimeType: getMimeType(wavPath) },
   });
 
   await waitForFileActive(ai as unknown as GenAiClient, uploaded);
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: config.audio_model,
       contents: createUserContent([
         createPartFromUri(uploaded.uri!, uploaded.mimeType!),
         `Analyze this audio track and return structured JSON.
@@ -119,6 +130,7 @@ Use "00:00:00" if you cannot determine a timestamp. Return empty arrays if no sp
       ]),
       config: {
         thinkingConfig: { thinkingBudget: 0 },
+        maxOutputTokens: config.audio_max_output_tokens,
         responseMimeType: "application/json",
         responseJsonSchema: {
           type: Type.OBJECT,
@@ -128,18 +140,9 @@ Use "00:00:00" if you cannot determine a timestamp. Return empty arrays if no sp
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  start: {
-                    type: Type.STRING,
-                    description: "HH:MM:SS start timestamp",
-                  },
-                  end: {
-                    type: Type.STRING,
-                    description: "HH:MM:SS end timestamp",
-                  },
-                  text: {
-                    type: Type.STRING,
-                    description: "Verbatim spoken text for this segment",
-                  },
+                  start: { type: Type.STRING, description: "HH:MM:SS start timestamp" },
+                  end: { type: Type.STRING, description: "HH:MM:SS end timestamp" },
+                  text: { type: Type.STRING, description: "Verbatim spoken text for this segment" },
                 },
                 propertyOrdering: ["start", "end", "text"],
                 required: ["start", "end", "text"],
@@ -150,18 +153,9 @@ Use "00:00:00" if you cannot determine a timestamp. Return empty arrays if no sp
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  start: {
-                    type: Type.STRING,
-                    description: "HH:MM:SS start timestamp",
-                  },
-                  end: {
-                    type: Type.STRING,
-                    description: "HH:MM:SS end timestamp",
-                  },
-                  tag: {
-                    type: Type.STRING,
-                    description: "Short lowercase label for the audio event",
-                  },
+                  start: { type: Type.STRING, description: "HH:MM:SS start timestamp" },
+                  end: { type: Type.STRING, description: "HH:MM:SS end timestamp" },
+                  tag: { type: Type.STRING, description: "Short lowercase label for the audio event" },
                 },
                 propertyOrdering: ["start", "end", "tag"],
                 required: ["start", "end", "tag"],
@@ -175,15 +169,52 @@ Use "00:00:00" if you cannot determine a timestamp. Return empty arrays if no sp
     });
 
     const parsed = parseGeminiAudioResponse(response.text ?? "");
+    const segments = parsed.transcription.map(s => ({
+      start: offsetTimestamp(s.start, offsetSec),
+      end: offsetTimestamp(s.end, offsetSec),
+      text: s.text,
+    }));
+    const tags = parsed.audio_tags.map(t => ({
+      start: offsetTimestamp(t.start, offsetSec),
+      end: offsetTimestamp(t.end, offsetSec),
+      tag: t.tag,
+    }));
 
+    return { segments, tags };
+  } finally {
+    await ai.files.delete({ name: uploaded.name! }).catch(() => {});
+  }
+}
+
+export interface AudioSlice {
+  startTime?: string;
+  endTime?: string;
+}
+
+export async function analyzeWithGeminiApi(
+  videoPath: string,
+  config: Config,
+  slice?: AudioSlice,
+): Promise<AudioResult> {
+  const { mkdtempSync, rmSync } = await import("fs");
+  const { tmpdir } = await import("os");
+  const { join } = await import("path");
+  const tmpDir = mkdtempSync(join(tmpdir(), "cvv-gemini-"));
+
+  try {
+    const wavPath = await extractAudio(videoPath, tmpDir, {
+      startTime: slice?.startTime,
+      endTime: slice?.endTime,
+    });
+    const { segments, tags } = await transcribeChunk(wavPath, 0, config);
     return {
       backend: "gemini-api",
-      transcription: parsed.transcription,
-      audio_tags: parsed.audio_tags,
+      transcription: segments,
+      audio_tags: tags,
       full_analysis: null,
     };
   } finally {
-    await ai.files.delete({ name: uploaded.name! }).catch(() => {});
+    rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 

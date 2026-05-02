@@ -133,3 +133,107 @@ describe("waitForFileActive", () => {
     expect(result.state).toBe("ACTIVE");
   });
 });
+
+import { transcribeChunk } from "../../src/backends/gemini-api.js";
+import type { Config } from "../../src/types.js";
+import { defaultConfig } from "../../src/config.js";
+
+function makeConfig(overrides: Partial<Config> = {}): Config {
+  return { ...defaultConfig, ...overrides };
+}
+
+describe("transcribeChunk", () => {
+  let originalEnv: string | undefined;
+
+  beforeEach(() => {
+    originalEnv = process.env.GEMINI_API_KEY;
+    process.env.GEMINI_API_KEY = "test-key";
+  });
+
+  afterEach(() => {
+    if (originalEnv === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalEnv;
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("passes config.audio_model and audio_max_output_tokens to generateContent", async () => {
+    const generateContent = vi.fn(async () => ({
+      text: JSON.stringify({ transcription: [], audio_tags: [] }),
+    }));
+    const upload = vi.fn(async () => ({ name: "files/x", uri: "gs://x", mimeType: "audio/wav", state: "ACTIVE" }));
+    const fakeAi = {
+      files: {
+        upload,
+        get: vi.fn(async (a: { name: string }) => ({ name: a.name, state: "ACTIVE", uri: "gs://x", mimeType: "audio/wav" })),
+        delete: vi.fn(async () => {}),
+      },
+      models: { generateContent },
+    };
+
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: vi.fn(function () { return fakeAi; }),
+      createPartFromUri: vi.fn(() => ({})),
+      createUserContent: vi.fn((parts: unknown[]) => parts),
+      Type: { OBJECT: "OBJECT", ARRAY: "ARRAY", STRING: "STRING" },
+    }));
+
+    const { transcribeChunk: fresh } = await import("../../src/backends/gemini-api.js?mock1");
+    await fresh("/tmp/x.wav", 0, makeConfig({ audio_model: "gemini-3-flash-preview", audio_max_output_tokens: 65536 }));
+
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    const callArgs = generateContent.mock.calls[0][0];
+    expect(callArgs.model).toBe("gemini-3-flash-preview");
+    expect(callArgs.config.maxOutputTokens).toBe(65536);
+  });
+
+  it("adds offsetSec to all returned timestamps", async () => {
+    const fakeResponse = {
+      text: JSON.stringify({
+        transcription: [
+          { start: "00:00:05", end: "00:00:10", text: "hello" },
+          { start: "00:01:00", end: "00:01:05", text: "world" },
+        ],
+        audio_tags: [{ start: "00:00:30", end: "00:00:32", tag: "music" }],
+      }),
+    };
+    const fakeAi = {
+      files: {
+        upload: vi.fn(async () => ({ name: "files/x", uri: "gs://x", mimeType: "audio/wav", state: "ACTIVE" })),
+        get: vi.fn(async (a: { name: string }) => ({ name: a.name, state: "ACTIVE", uri: "gs://x", mimeType: "audio/wav" })),
+        delete: vi.fn(async () => {}),
+      },
+      models: { generateContent: vi.fn(async () => fakeResponse) },
+    };
+
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: vi.fn(function () { return fakeAi; }),
+      createPartFromUri: vi.fn(() => ({})),
+      createUserContent: vi.fn((parts: unknown[]) => parts),
+      Type: { OBJECT: "OBJECT", ARRAY: "ARRAY", STRING: "STRING" },
+    }));
+
+    const { transcribeChunk: fresh } = await import("../../src/backends/gemini-api.js?mock2");
+    const offsetSec = 600;
+    const result = await fresh("/tmp/x.wav", offsetSec, makeConfig());
+
+    expect(result.segments[0].start).toBe("00:10:05");
+    expect(result.segments[0].end).toBe("00:10:10");
+    expect(result.segments[1].start).toBe("00:11:00");
+    expect(result.segments[1].end).toBe("00:11:05");
+    expect(result.tags[0].start).toBe("00:10:30");
+    expect(result.tags[0].end).toBe("00:10:32");
+  });
+
+  it("throws when GEMINI_API_KEY missing", async () => {
+    delete process.env.GEMINI_API_KEY;
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: vi.fn(),
+      createPartFromUri: vi.fn(),
+      createUserContent: vi.fn(),
+      Type: {},
+    }));
+    const { transcribeChunk: fresh } = await import("../../src/backends/gemini-api.js?mock3");
+    await expect(fresh("/tmp/x.wav", 0, makeConfig())).rejects.toThrow(/GEMINI_API_KEY/);
+  });
+});
