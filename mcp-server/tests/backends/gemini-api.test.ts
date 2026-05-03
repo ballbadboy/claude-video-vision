@@ -332,11 +332,16 @@ describe("analyzeWithGeminiApi orchestrator", () => {
 
   it("emits sentinel segment when chunk fails after retry", async () => {
     // Chunk 2 (offset=1200) fails on every call. Other chunks succeed first try.
-    // With retries=1, chunk 2 makes 2 worker calls — both fail — yielding sentinel + warnings.
+    // Failure is keyed by offset (not by callCount) so it's deterministic under
+    // Promise.all parallelism.
     const FAIL_OFFSET = 1200;
     const worker = vi.fn(async (_wav: string, offset: number) => {
       if (offset === FAIL_OFFSET) throw new Error("Gemini 500");
-      return { segments: [{ start: "00:00:00", end: "00:00:05", text: "ok" }], tags: [] };
+      // Mirror real worker behavior: return offset-applied timestamps so clamping doesn't drop them.
+      return {
+        segments: [{ start: formatHMS(offset), end: formatHMS(offset + 5), text: "ok" }],
+        tags: [],
+      };
     });
     const extract = vi.fn(async (_v: string, _d: string, opts?: { filename?: string }) =>
       `/tmp/${opts?.filename ?? "audio.wav"}`,
@@ -350,6 +355,7 @@ describe("analyzeWithGeminiApi orchestrator", () => {
     });
     const failedSegments = result.transcription.filter(t => t.text.includes("transcription failed"));
     expect(failedSegments).toHaveLength(1);
+    expect(result.transcription.filter(t => t.text === "ok")).toHaveLength(3);  // 3 successful chunks contribute
     expect(result.warnings!.filter(w => w.event === "failed")).toHaveLength(1);
     expect(result.warnings!.filter(w => w.event === "retry")).toHaveLength(1);
   });
@@ -386,7 +392,8 @@ describe("analyzeWithGeminiApi orchestrator", () => {
     const overflow = result.transcription.find(s => s.text === "overflow segment");
     expect(overflow).toBeDefined();
     expect(overflow!.end).toBe("00:20:00"); // clamped to chunk 1's end (1200s)
-    // The "outside chunk after clamp" segment should be dropped (start 11:00 > chunk end 20:00)
+    expect(overflow!.start).toBe("00:10:00"); // clamped up from 09:00 to chunk 1's start (600s)
+    // The "outside chunk after clamp" segment should be dropped (start 21:00 > chunk 1 end 20:00)
     const dropped = result.transcription.find(s => s.text === "outside chunk after clamp");
     expect(dropped).toBeUndefined();
   });
