@@ -107,6 +107,7 @@ export interface VideoAnalysis {
   frame_stats: FrameStats[];
   loudness_summary?: { mean_lufs: number; range_lu: number };
   transcription?: TranscriptionSegment[];
+  audio_warnings?: ChunkWarning[];
   content_profile: string;
 }
 

@@ -237,6 +237,9 @@ export function registerVideoAnalyze(server: McpServer): void {
           }
 
           analysis.transcription = audioResult.transcription;
+          if (audioResult.warnings && audioResult.warnings.length > 0) {
+            analysis.audio_warnings = audioResult.warnings;
+          }
         }
 
         // Ensure content_profile is set when motion filter was not requested
