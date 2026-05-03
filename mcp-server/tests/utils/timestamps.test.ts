@@ -118,4 +118,34 @@ describe("shiftAudioResult", () => {
     expect(shifted.backend).toBe("local");
     expect(shifted.full_analysis).toBeNull();
   });
+
+  it("preserves warnings field through spread when shifting", () => {
+    const input: AudioResult = {
+      backend: "gemini-api",
+      transcription: [{ start: "00:00:00", end: "00:00:05", text: "hi" }],
+      audio_tags: [],
+      full_analysis: null,
+      warnings: [
+        { chunk_index: 0, chunk_total: 2, time_range: "00:00:00-00:10:00", event: "hard_cut", detail: "no silence" },
+      ],
+    };
+    const result = shiftAudioResult(input, 60);
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings![0].event).toBe("hard_cut");
+  });
+
+  it("preserves warnings even when offset is 0 (returns input unchanged)", () => {
+    const input: AudioResult = {
+      backend: "gemini-api",
+      transcription: [],
+      audio_tags: [],
+      full_analysis: null,
+      warnings: [
+        { chunk_index: 0, chunk_total: 1, time_range: "00:00:00-00:05:00", event: "retry", detail: "transient" },
+      ],
+    };
+    const result = shiftAudioResult(input, 0);
+    expect(result.warnings).toEqual(input.warnings);
+  });
 });

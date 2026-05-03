@@ -86,4 +86,20 @@ describe("chunking types", () => {
     };
     expect(r.warnings).toBeUndefined();
   });
+
+  it("VideoAnalysis accepts audio_warnings field", () => {
+    const analysis: VideoAnalysis = {
+      scenes: [],
+      black_intervals: [],
+      silence_intervals: [],
+      freeze_intervals: [],
+      frame_stats: [],
+      content_profile: "unknown",
+      audio_warnings: [
+        { chunk_index: 0, chunk_total: 2, time_range: "00:00:00-00:10:00", event: "hard_cut" },
+      ],
+    };
+    expect(analysis.audio_warnings).toHaveLength(1);
+    expect(analysis.audio_warnings![0].event).toBe("hard_cut");
+  });
 });
