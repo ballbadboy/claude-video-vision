@@ -39,6 +39,33 @@ describe("audio extraction", () => {
     expect(wavPath.endsWith("audio.wav")).toBe(true);
     expect(existsSync(wavPath)).toBe(true);
   });
+
+  it("produces output of correct duration with nonzero startTime", async () => {
+    // Fixture is 3 seconds. Extract from 00:00:01 to 00:00:02 (1 second window).
+    // Verifies that -to is interpreted as an absolute file timestamp, not as duration.
+    // If -to were interpreted as duration, we'd get 2 seconds instead of 1.
+    const wavPath = await extractAudio(FIXTURE, OUT_DIR, {
+      startTime: "00:00:01",
+      endTime: "00:00:02",
+      filename: "duration-test.wav",
+    });
+    expect(existsSync(wavPath)).toBe(true);
+
+    // Use ffprobe to read actual output duration.
+    const { execFile } = await import("child_process");
+    const { promisify } = await import("util");
+    const execFileAsync = promisify(execFile);
+    const { stdout } = await execFileAsync("ffprobe", [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      wavPath,
+    ]);
+    const durationSec = parseFloat(stdout.trim());
+    // Allow ±0.2s tolerance for codec/container framing
+    expect(durationSec).toBeGreaterThan(0.8);
+    expect(durationSec).toBeLessThan(1.2);
+  });
 });
 
 describe("buildExtractArgs", () => {
