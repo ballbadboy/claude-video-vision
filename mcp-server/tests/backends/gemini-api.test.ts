@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { waitForFileActive } from "../../src/backends/gemini-api.js";
+import { formatHMS } from "../../src/utils/timestamps.js";
 
 interface FakeFile {
   name?: string;
@@ -308,8 +309,9 @@ describe("analyzeWithGeminiApi orchestrator", () => {
   });
 
   it("uses chunked path when duration > chunk_trigger", async () => {
+    // Mock mirrors real worker behavior: returns absolute timestamps (offset already applied).
     const worker = vi.fn(async (_wav, offset) => ({
-      segments: [{ start: "00:00:00", end: "00:00:05", text: `at ${offset}` }],
+      segments: [{ start: formatHMS(offset), end: formatHMS(offset + 5), text: `at ${offset}` }],
       tags: [],
     }));
     const extract = vi.fn(async (_v: string, _d: string, opts?: { filename?: string }) =>
@@ -350,6 +352,43 @@ describe("analyzeWithGeminiApi orchestrator", () => {
     expect(failedSegments).toHaveLength(1);
     expect(result.warnings!.filter(w => w.event === "failed")).toHaveLength(1);
     expect(result.warnings!.filter(w => w.event === "retry")).toHaveLength(1);
+  });
+
+  it("clamps overflowing segment timestamps to chunk bounds", async () => {
+    // Worker returns a segment with start within chunk, but end past chunk's actual end.
+    // Simulates Gemini hallucinating a long end timestamp.
+    // For a 2400s video with chunk_size=600, chunk 1's bounds are [600, 1200].
+    // We make chunk 1 return a segment that "ends" at 3000s absolute (way past 1200).
+    const worker = vi.fn(async (_wav: string, offset: number) => {
+      if (offset === 600) {
+        // overflowing segment: starts at 9:00 absolute (within chunk), ends at 50:00 (past chunk end)
+        return {
+          segments: [
+            { start: "00:09:00", end: "00:50:00", text: "overflow segment" },
+            { start: "00:21:00", end: "00:21:30", text: "outside chunk after clamp" }, // start past chunk end (chunk 1 ends at 00:20:00)
+          ],
+          tags: [],
+        };
+      }
+      return { segments: [{ start: "00:00:00", end: "00:00:05", text: "ok" }], tags: [] };
+    });
+    const extract = vi.fn(async (_v: string, _d: string, opts?: { filename?: string }) =>
+      `/tmp/${opts?.filename ?? "audio.wav"}`,
+    );
+    const silenceDetector = vi.fn(async () => []);
+    const result = await analyzeWithGeminiApi("/x.mp4", baseConfig, undefined, {
+      getMetadata: metaStub(2400),
+      extract,
+      worker,
+      silenceDetector,
+    });
+    // Find the clamped overflow segment in chunk 1's output
+    const overflow = result.transcription.find(s => s.text === "overflow segment");
+    expect(overflow).toBeDefined();
+    expect(overflow!.end).toBe("00:20:00"); // clamped to chunk 1's end (1200s)
+    // The "outside chunk after clamp" segment should be dropped (start 11:00 > chunk end 20:00)
+    const dropped = result.transcription.find(s => s.text === "outside chunk after clamp");
+    expect(dropped).toBeUndefined();
   });
 
   it("uses single-call path when slice is provided, even for long videos", async () => {

@@ -330,8 +330,14 @@ export async function analyzeWithGeminiApi(
     chunks.forEach((c, i) => {
       const r = results[i];
       if (r.ok) {
-        transcription.push(...(r.segments ?? []));
-        audio_tags.push(...(r.tags ?? []));
+        for (const seg of r.segments ?? []) {
+          const clamped = clampSegment(seg, c.start, c.end);
+          if (clamped) transcription.push(clamped);
+        }
+        for (const tag of r.tags ?? []) {
+          const clamped = clampSegment(tag, c.start, c.end);
+          if (clamped) audio_tags.push(clamped);
+        }
       } else {
         transcription.push({
           start: secondsToHMS(c.start),
@@ -362,6 +368,17 @@ export async function analyzeWithGeminiApi(
 
 function secondsToHMS(sec: number): string {
   return formatHMS(sec);
+}
+
+function clampSegment<T extends { start: string; end: string }>(
+  seg: T,
+  minSec: number,
+  maxSec: number,
+): T | null {
+  const clampedStart = Math.max(parseHMS(seg.start), minSec);
+  const clampedEnd = Math.min(parseHMS(seg.end), maxSec);
+  if (clampedEnd <= clampedStart) return null;
+  return { ...seg, start: formatHMS(clampedStart), end: formatHMS(clampedEnd) };
 }
 
 function hmsRange(startSec: number, endSec: number): string {
