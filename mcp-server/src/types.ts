@@ -20,7 +20,7 @@ export interface Config {
   audio_max_output_tokens: number;
   audio_chunk_trigger_seconds: number;
   audio_chunk_size_seconds: number;
-  audio_chunk_overlap_seconds: number;
+  audio_chunk_overlap_seconds: number; // reserved: dedup post-processor TBD; default 0 = no overlap
 }
 
 export interface VideoMetadata {
