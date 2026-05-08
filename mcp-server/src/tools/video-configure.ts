@@ -25,6 +25,11 @@ export function registerVideoConfigure(server: McpServer): void {
       session_max_age_days: z.number().min(1).optional(),
       downloads_max_age_days: z.number().min(1).optional(),
       clear_sessions: z.boolean().optional(),
+      audio_model: z.string().min(1).optional(),
+      audio_max_output_tokens: z.number().min(1024).max(200000).optional(),
+      audio_chunk_trigger_seconds: z.number().min(60).optional(),
+      audio_chunk_size_seconds: z.number().min(60).optional(),
+      audio_chunk_overlap_seconds: z.number().min(0).max(60).optional(),
     },
     async (params) => {
       if (params.clear_sessions) {

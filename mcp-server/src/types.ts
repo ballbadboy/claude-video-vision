@@ -17,6 +17,11 @@ export interface Config {
   enable_index: boolean;
   session_max_age_days: number;
   downloads_max_age_days: number;
+  audio_model: string;
+  audio_max_output_tokens: number;
+  audio_chunk_trigger_seconds: number;
+  audio_chunk_size_seconds: number;
+  audio_chunk_overlap_seconds: number; // reserved: dedup post-processor TBD; default 0 = no overlap
 }
 
 export interface VideoMetadata {
@@ -57,6 +62,7 @@ export interface AudioResult {
   transcription_source?: "youtube_subtitles" | "youtube_auto_captions" | "gemini-api" | "local_whisper" | "openai" | "none";
   transcription_source_detail?: string;
   transcription_fallback_reason?: string;
+  warnings?: ChunkWarning[];
 }
 
 export interface VideoWatchResult {
@@ -105,6 +111,7 @@ export interface VideoAnalysis {
   frame_stats: FrameStats[];
   loudness_summary?: { mean_lufs: number; range_lu: number };
   transcription?: TranscriptionSegment[];
+  audio_warnings?: ChunkWarning[];
   content_profile: string;
 }
 
@@ -123,4 +130,21 @@ export interface Segment {
   end: string;
   fps: number;
   resolution?: number;
+}
+
+export interface ChunkPlan {
+  start: number;
+  actual_start: number;
+  end: number;
+  index: number;
+  total: number;
+  clean_cut: boolean;
+}
+
+export interface ChunkWarning {
+  chunk_index: number;
+  chunk_total: number;
+  time_range: string;
+  event: "retry" | "failed" | "hard_cut" | "loose_threshold";
+  detail?: string;
 }

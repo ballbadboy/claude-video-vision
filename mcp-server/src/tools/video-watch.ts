@@ -61,7 +61,7 @@ export function deriveFps(params: DeriveFpsParams): number {
 export function registerVideoWatch(server: McpServer): void {
   server.tool(
     "video_watch",
-    "Extract frames and process audio from a local video file or YouTube URL. Returns frames (as base64 images or text descriptions) + transcription + audio analysis for Claude to understand the video content. IMPORTANT: For videos longer than 30 seconds, call video_analyze FIRST to get structural data (scene changes, silence, transcription) before calling this tool — use that data to set smart segments with variable FPS.",
+    "Extract frames and process audio from a local video file or YouTube URL. Returns frames (as base64 images or text descriptions) + transcription + audio analysis for Claude to understand the video content. IMPORTANT: For videos longer than 30 seconds, call video_analyze FIRST to get structural data (scene changes, silence, transcription) before calling this tool — use that data to set smart segments with variable FPS. When the video is long enough to trigger audio chunking, the result's `audio.warnings` array (if present) reports chunk-boundary decisions and any per-chunk retries or failures — surface these to the user.",
     {
       path: z.string().describe("Absolute/relative path to the video file, or a YouTube URL"),
       fps: z.union([z.coerce.number().positive(), z.literal("auto")]).default("auto").describe("Frames per second to extract"),
@@ -165,11 +165,10 @@ export function registerVideoWatch(server: McpServer): void {
           }),
         );
       } else if (config.backend === "gemini-api") {
-        const audioDir = join(workDir, "audio");
-        audioPromise = extractAudio(safePath, audioDir, {
+        audioPromise = analyzeWithGeminiApi(safePath, config, {
           startTime: params.start_time,
           endTime: params.end_time,
-        }).then((wavPath) => analyzeWithGeminiApi(wavPath));
+        });
       } else if (config.backend === "openai") {
         const audioDir = join(workDir, "audio");
         audioPromise = extractAudio(safePath, audioDir, {

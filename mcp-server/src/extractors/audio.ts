@@ -8,25 +8,20 @@ const execFileAsync = promisify(execFile);
 export interface ExtractAudioOptions {
   startTime?: string;
   endTime?: string;
+  filename?: string;
 }
 
-export async function extractAudio(
+export function buildExtractArgs(
   videoPath: string,
-  outputDir: string,
-  options: ExtractAudioOptions = {},
-): Promise<string> {
-  if (!existsSync(outputDir)) {
-    mkdirSync(outputDir, { recursive: true });
-  }
+  outputPath: string,
+  options: ExtractAudioOptions,
+): string[] {
+  const args: string[] = ["-i", videoPath];
 
-  const outputPath = join(outputDir, "audio.wav");
-  const args: string[] = [];
-
+  // Output accurate-seek: -ss AFTER -i. Slower but sample-accurate.
   if (options.startTime) {
     args.push("-ss", options.startTime);
   }
-
-  args.push("-i", videoPath);
 
   if (options.endTime) {
     args.push("-to", options.endTime);
@@ -40,6 +35,22 @@ export async function extractAudio(
     "-y",
     outputPath,
   );
+
+  return args;
+}
+
+export async function extractAudio(
+  videoPath: string,
+  outputDir: string,
+  options: ExtractAudioOptions = {},
+): Promise<string> {
+  if (!existsSync(outputDir)) {
+    mkdirSync(outputDir, { recursive: true });
+  }
+
+  const filename = options.filename ?? "audio.wav";
+  const outputPath = join(outputDir, filename);
+  const args = buildExtractArgs(videoPath, outputPath, options);
 
   await execFileAsync("ffmpeg", args);
   return outputPath;

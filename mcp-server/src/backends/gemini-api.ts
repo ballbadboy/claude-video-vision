@@ -1,4 +1,11 @@
-import type { AudioResult, AudioTag, TranscriptionSegment } from "../types.js";
+import type { AudioResult, AudioTag, ChunkWarning, Config, TranscriptionSegment } from "../types.js";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { extractAudio } from "../extractors/audio.js";
+import { parseHMS, formatHMS } from "../utils/timestamps.js";
+import { planChunks, type SilenceDetector } from "../extractors/audio-chunker.js";
+import { getVideoMetadata } from "../extractors/frames.js";
 
 interface GenAiFile {
   name?: string;
@@ -88,7 +95,15 @@ export function parseGeminiAudioResponse(raw: string): ParsedGeminiAudio {
   return { transcription, audio_tags };
 }
 
-export async function analyzeWithGeminiApi(audioPath: string): Promise<AudioResult> {
+function offsetTimestamp(hms: string, offsetSec: number): string {
+  return formatHMS(parseHMS(hms) + offsetSec);
+}
+
+export async function transcribeChunk(
+  wavPath: string,
+  offsetSec: number,
+  config: Config,
+): Promise<{ segments: TranscriptionSegment[]; tags: AudioTag[] }> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error("GEMINI_API_KEY environment variable is not set. Run video_setup to configure.");
@@ -98,15 +113,15 @@ export async function analyzeWithGeminiApi(audioPath: string): Promise<AudioResu
   const ai = new GoogleGenAI({ apiKey });
 
   const uploaded = await ai.files.upload({
-    file: audioPath,
-    config: { mimeType: getMimeType(audioPath) },
+    file: wavPath,
+    config: { mimeType: getMimeType(wavPath) },
   });
 
   await waitForFileActive(ai as unknown as GenAiClient, uploaded);
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: config.audio_model,
       contents: createUserContent([
         createPartFromUri(uploaded.uri!, uploaded.mimeType!),
         `Analyze this audio track and return structured JSON.
@@ -119,6 +134,7 @@ Use "00:00:00" if you cannot determine a timestamp. Return empty arrays if no sp
       ]),
       config: {
         thinkingConfig: { thinkingBudget: 0 },
+        maxOutputTokens: config.audio_max_output_tokens,
         responseMimeType: "application/json",
         responseJsonSchema: {
           type: Type.OBJECT,
@@ -128,18 +144,9 @@ Use "00:00:00" if you cannot determine a timestamp. Return empty arrays if no sp
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  start: {
-                    type: Type.STRING,
-                    description: "HH:MM:SS start timestamp",
-                  },
-                  end: {
-                    type: Type.STRING,
-                    description: "HH:MM:SS end timestamp",
-                  },
-                  text: {
-                    type: Type.STRING,
-                    description: "Verbatim spoken text for this segment",
-                  },
+                  start: { type: Type.STRING, description: "HH:MM:SS start timestamp" },
+                  end: { type: Type.STRING, description: "HH:MM:SS end timestamp" },
+                  text: { type: Type.STRING, description: "Verbatim spoken text for this segment" },
                 },
                 propertyOrdering: ["start", "end", "text"],
                 required: ["start", "end", "text"],
@@ -150,18 +157,9 @@ Use "00:00:00" if you cannot determine a timestamp. Return empty arrays if no sp
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  start: {
-                    type: Type.STRING,
-                    description: "HH:MM:SS start timestamp",
-                  },
-                  end: {
-                    type: Type.STRING,
-                    description: "HH:MM:SS end timestamp",
-                  },
-                  tag: {
-                    type: Type.STRING,
-                    description: "Short lowercase label for the audio event",
-                  },
+                  start: { type: Type.STRING, description: "HH:MM:SS start timestamp" },
+                  end: { type: Type.STRING, description: "HH:MM:SS end timestamp" },
+                  tag: { type: Type.STRING, description: "Short lowercase label for the audio event" },
                 },
                 propertyOrdering: ["start", "end", "tag"],
                 required: ["start", "end", "tag"],
@@ -175,16 +173,216 @@ Use "00:00:00" if you cannot determine a timestamp. Return empty arrays if no sp
     });
 
     const parsed = parseGeminiAudioResponse(response.text ?? "");
+    const segments = parsed.transcription.map(s => ({
+      start: offsetTimestamp(s.start, offsetSec),
+      end: offsetTimestamp(s.end, offsetSec),
+      text: s.text,
+    }));
+    const tags = parsed.audio_tags.map(t => ({
+      start: offsetTimestamp(t.start, offsetSec),
+      end: offsetTimestamp(t.end, offsetSec),
+      tag: t.tag,
+    }));
 
-    return {
-      backend: "gemini-api",
-      transcription: parsed.transcription,
-      audio_tags: parsed.audio_tags,
-      full_analysis: null,
-    };
+    return { segments, tags };
   } finally {
     await ai.files.delete({ name: uploaded.name! }).catch(() => {});
   }
+}
+
+export interface ChunkResult {
+  ok: boolean;
+  attempt: number;
+  segments?: TranscriptionSegment[];
+  tags?: AudioTag[];
+  error?: string;
+}
+
+export type TranscribeWorker = (
+  wavPath: string,
+  offsetSec: number,
+  config: Config,
+) => Promise<{ segments: TranscriptionSegment[]; tags: AudioTag[] }>;
+
+export type WarningEmitter = (w: { event: "retry"; attempt: number; error: string }) => void;
+
+export async function transcribeChunkWithRetry(
+  wavPath: string,
+  offsetSec: number,
+  config: Config,
+  retries: number,
+  worker: TranscribeWorker = transcribeChunk,
+  onWarning?: WarningEmitter,
+): Promise<ChunkResult> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const r = await worker(wavPath, offsetSec, config);
+      return { ok: true, attempt, segments: r.segments, tags: r.tags };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (attempt < retries) {
+        if (onWarning) onWarning({ event: "retry", attempt, error: msg });
+        continue;
+      }
+      return { ok: false, attempt: attempt + 1, error: msg };
+    }
+  }
+  return { ok: false, attempt: retries + 1, error: "unreachable" };
+}
+
+export interface AudioSlice {
+  startTime?: string;
+  endTime?: string;
+}
+
+export interface AnalyzeDeps {
+  getMetadata?: typeof getVideoMetadata;
+  extract?: typeof extractAudio;
+  worker?: TranscribeWorker;
+  silenceDetector?: SilenceDetector;
+}
+
+export async function analyzeWithGeminiApi(
+  videoPath: string,
+  config: Config,
+  slice?: AudioSlice,
+  deps: AnalyzeDeps = {},
+): Promise<AudioResult> {
+  const getMetadata = deps.getMetadata ?? getVideoMetadata;
+  const extract = deps.extract ?? extractAudio;
+  const worker = deps.worker ?? transcribeChunk;
+  const silenceDetector = deps.silenceDetector;
+
+  const tmpDir = mkdtempSync(join(tmpdir(), "cvv-gemini-"));
+
+  try {
+    // Slice mode (start/end set) always uses single-call path
+    if (slice?.startTime || slice?.endTime) {
+      const wavPath = await extract(videoPath, tmpDir, {
+        startTime: slice.startTime,
+        endTime: slice.endTime,
+      });
+      const { segments, tags } = await worker(wavPath, 0, config);
+      return {
+        backend: "gemini-api",
+        transcription: segments,
+        audio_tags: tags,
+        full_analysis: null,
+      };
+    }
+
+    const metadata = await getMetadata(videoPath);
+
+    if (metadata.duration_seconds <= config.audio_chunk_trigger_seconds) {
+      const wavPath = await extract(videoPath, tmpDir);
+      const { segments, tags } = await worker(wavPath, 0, config);
+      return {
+        backend: "gemini-api",
+        transcription: segments,
+        audio_tags: tags,
+        full_analysis: null,
+      };
+    }
+
+    // Chunked path
+    const { chunks, warnings: planWarnings } = await planChunks(
+      videoPath,
+      metadata.duration_seconds,
+      config,
+      silenceDetector,
+    );
+
+    const wavPaths = await Promise.all(
+      chunks.map(c =>
+        extract(videoPath, tmpDir, {
+          startTime: secondsToHMS(c.actual_start),
+          endTime: secondsToHMS(c.end),
+          filename: `chunk-${c.index}.wav`,
+        }),
+      ),
+    );
+
+    const allWarnings: ChunkWarning[] = [...planWarnings];
+
+    const results = await Promise.all(
+      chunks.map((c, i) =>
+        transcribeChunkWithRetry(
+          wavPaths[i],
+          c.start,
+          config,
+          1,
+          worker,
+          (w) => {
+            allWarnings.push({
+              chunk_index: c.index,
+              chunk_total: c.total,
+              time_range: hmsRange(c.start, c.end),
+              event: w.event,
+              detail: w.error,
+            });
+          },
+        ),
+      ),
+    );
+
+    const transcription: TranscriptionSegment[] = [];
+    const audio_tags: AudioTag[] = [];
+    chunks.forEach((c, i) => {
+      const r = results[i];
+      if (r.ok) {
+        for (const seg of r.segments ?? []) {
+          const clamped = clampSegment(seg, c.start, c.end);
+          if (clamped) transcription.push(clamped);
+        }
+        for (const tag of r.tags ?? []) {
+          const clamped = clampSegment(tag, c.start, c.end);
+          if (clamped) audio_tags.push(clamped);
+        }
+      } else {
+        transcription.push({
+          start: secondsToHMS(c.start),
+          end: secondsToHMS(c.end),
+          text: "[transcription failed for this segment after retry]",
+        });
+        allWarnings.push({
+          chunk_index: c.index,
+          chunk_total: c.total,
+          time_range: hmsRange(c.start, c.end),
+          event: "failed",
+          detail: r.error,
+        });
+      }
+    });
+
+    return {
+      backend: "gemini-api",
+      transcription,
+      audio_tags,
+      full_analysis: null,
+      warnings: allWarnings.length > 0 ? allWarnings : undefined,
+    };
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function secondsToHMS(sec: number): string {
+  return formatHMS(sec);
+}
+
+function clampSegment<T extends { start: string; end: string }>(
+  seg: T,
+  minSec: number,
+  maxSec: number,
+): T | null {
+  const clampedStart = Math.max(parseHMS(seg.start), minSec);
+  const clampedEnd = Math.min(parseHMS(seg.end), maxSec);
+  if (clampedEnd <= clampedStart) return null;
+  return { ...seg, start: formatHMS(clampedStart), end: formatHMS(clampedEnd) };
+}
+
+function hmsRange(startSec: number, endSec: number): string {
+  return `${secondsToHMS(startSec)}-${secondsToHMS(endSec)}`;
 }
 
 function getMimeType(path: string): string {

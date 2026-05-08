@@ -47,7 +47,7 @@ const SESSIONS_DIR = join(homedir(), ".claude-video-vision", "sessions");
 export function registerVideoAnalyze(server: McpServer): void {
   server.tool(
     "video_analyze",
-    "Analyze local video file or YouTube URL structure using ffmpeg filters. Returns scene changes, silence intervals, motion levels, and more. Use this before video_watch to plan which segments need detailed frame extraction. Does not extract frames.",
+    "Analyze local video file or YouTube URL structure using ffmpeg filters. Returns scene changes, silence intervals, motion levels, and more. Use this before video_watch to plan which segments need detailed frame extraction. Does not extract frames. When transcription is enabled and the video is longer than the configured chunk trigger, the audio is chunked and transcribed in parallel; the result's `analysis.audio_warnings` array (when present) describes chunk-boundary decisions, retries, or failures — surface these to the user.",
     {
       path: z.string().describe("Absolute/relative path to the video file, or a YouTube URL"),
       filters: z.object({
@@ -221,9 +221,7 @@ export function registerVideoAnalyze(server: McpServer): void {
           if (captionFallbackReason === null && resolved.captions) {
             audioResult = buildCaptionAudioResult(resolved.captions);
           } else if (config.backend === "gemini-api") {
-            const audioDir = join(workDir, "audio");
-            const wavPath = await extractAudio(safePath, audioDir, {});
-            audioResult = await analyzeWithGeminiApi(wavPath);
+            audioResult = await analyzeWithGeminiApi(safePath, config);
           } else if (config.backend === "openai") {
             const audioDir = join(workDir, "audio");
             const wavPath = await extractAudio(safePath, audioDir, {});
@@ -253,6 +251,9 @@ export function registerVideoAnalyze(server: McpServer): void {
           }
 
           analysis.transcription = audioResult.transcription;
+          if (audioResult.warnings && audioResult.warnings.length > 0) {
+            analysis.audio_warnings = audioResult.warnings;
+          }
         }
 
         // Ensure content_profile is set when motion filter was not requested
