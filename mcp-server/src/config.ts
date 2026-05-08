@@ -15,6 +15,7 @@ export const defaultConfig: Config = {
   frame_describer_model: "sonnet",
   enable_index: false,
   session_max_age_days: 7,
+  downloads_max_age_days: 7,
   audio_model: "gemini-3-flash-preview",
   audio_max_output_tokens: 65536,
   audio_chunk_trigger_seconds: 1200,
